@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: etm
+      POSTGRES_PASSWORD: etm
+      POSTGRES_DB: etm_intel
+    ports:
+      - "5434:5432"
+    volumes:
+      - etm_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etm -d etm_intel"]
+      interval: 5s
+      retries: 10
+volumes:
+  etm_pg:

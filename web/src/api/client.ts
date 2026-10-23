@@ -1,0 +1,74 @@
+import type {
+  AlertEvent,
+  AlertRule,
+  Analytics,
+  AppSettings,
+  CountRow,
+  DashboardPayload,
+  HistoricalRecord,
+  Opportunity,
+  OpportunityQuery,
+  OpportunitySummary,
+  OrganizationRecord,
+  Page,
+  ParsedSearch,
+  PipelineStatus,
+  Product,
+  SourceInfo,
+  SourceRun,
+  SyncProgress,
+  User,
+} from '@etm/shared';
+
+export interface PublicConfig {
+  store: string;
+  schedulerEnabled: boolean;
+  keys: { name: string; configured: boolean; purpose: string }[];
+  ai: { name: string; model: string | null; configured: boolean; message: string };
+  sam?: { baseUrl: string; intervalMinutes: number; dailyRequestLimit: number; noticeTypes: string; naicsCodes: string[]; fetchDescriptions: boolean };
+}
+
+/** One contract, two implementations: HttpApi (Node backend) and StandaloneApi (in-browser engine). */
+export interface Api {
+  readonly mode: 'server' | 'standalone';
+  config(): Promise<PublicConfig>;
+  dashboard(): Promise<DashboardPayload>;
+  listOpportunities(q: OpportunityQuery): Promise<Page<OpportunitySummary>>;
+  search(query: string, filters: OpportunityQuery): Promise<{ parsed: ParsedSearch; results: Page<OpportunitySummary> }>;
+  getOpportunity(id: string): Promise<Opportunity>;
+  setStatus(id: string, status: PipelineStatus): Promise<Opportunity>;
+  assign(id: string, owner: string | null): Promise<Opportunity>;
+  addNote(id: string, body: string): Promise<Opportunity>;
+  updatePipeline(id: string, patch: Partial<Pick<Opportunity, 'nextFollowUp' | 'expectedCloseDate' | 'quoteValue' | 'lastContactedAt'>>): Promise<Opportunity>;
+  save(id: string, saved: boolean): Promise<Opportunity>;
+  merge(id: string, duplicateId: string): Promise<Opportunity>;
+  dismissDuplicate(id: string, duplicateId: string): Promise<Opportunity>;
+  exportCsv(q: OpportunityQuery): Promise<string>;
+  map(): Promise<{ states: CountRow[] }>;
+  organizations(): Promise<OrganizationRecord[]>;
+  analytics(): Promise<Analytics>;
+  historical(): Promise<HistoricalRecord[]>;
+  products(): Promise<Product[]>;
+  createProduct(p: Record<string, unknown>): Promise<Product>;
+  deleteProduct(id: string): Promise<void>;
+  importProducts(csv: string, replaceDemo: boolean): Promise<{ imported: number; errors: string[]; total: number }>;
+  rematch(): Promise<{ rematched: number }>;
+  addCategory(name: string): Promise<string[]>;
+  sources(): Promise<SourceInfo[]>;
+  runs(): Promise<SourceRun[]>;
+  testSource(key: string): Promise<{ ok: boolean; message: string }>;
+  updateSource(key: string, patch: { enabled?: boolean; intervalMinutes?: number; config?: Record<string, unknown> }): Promise<SourceInfo>;
+  startSync(sources?: string[]): Promise<{ runId: string; alreadyRunning: boolean }>;
+  syncProgress(runId: string): Promise<SyncProgress>;
+  alerts(): Promise<AlertRule[]>;
+  saveAlert(rule: Partial<AlertRule> & { id?: string }): Promise<AlertRule>;
+  deleteAlert(id: string): Promise<void>;
+  alertEvents(): Promise<AlertEvent[]>;
+  markAlertsRead(): Promise<void>;
+  settings(): Promise<AppSettings>;
+  updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  users(): Promise<User[]>;
+  createUser(u: Omit<User, 'id'>): Promise<User>;
+}
+
+export type { DashboardPayload };

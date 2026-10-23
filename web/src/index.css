@@ -1,0 +1,207 @@
+@import "tailwindcss";
+
+/* ETechMatter Intelligence — design tokens.
+   Deep "radar-room" navy chrome, cool neutral work surface, cobalt action color.
+   Intent colors (hot / warm / low) are semantic and never reused as accents. */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "IBM Plex Sans Condensed", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-canvas: #f1f3f6;
+  --color-surface: #ffffff;
+  --color-sunken: #f6f7f9;
+  --color-line: #e1e5eb;
+  --color-line-strong: #c7ced8;
+  --color-ink: #0d1726;
+  --color-ink-2: #3a4656;
+  --color-ink-3: #667385;
+
+  --color-brand: #1d5fd1;
+  --color-brand-strong: #164aa6;
+  --color-brand-soft: #e6edfa;
+  --color-signal: #ff6b4a;
+
+  --color-nav: #0b1a2e;
+  --color-nav-2: #12243b;
+  --color-nav-line: #1d324d;
+  --color-nav-ink: #d5dfec;
+  --color-nav-muted: #8295ae;
+
+  --color-hot: #cf3a2e;
+  --color-hot-soft: #fcebe9;
+  --color-hot-ink: #9c261c;
+  --color-warm: #c7660f;
+  --color-warm-soft: #fcf0e2;
+  --color-warm-ink: #8a470a;
+  --color-low: #1d8a3b;
+  --color-low-soft: #e6f4e9;
+  --color-low-ink: #14602a;
+  --color-muted: #8a94a3;
+  --color-muted-soft: #edf0f3;
+
+  --color-demo: #6d45c4;
+  --color-demo-soft: #efe9fb;
+  --color-demo-ink: #4f2f97;
+  --color-verified: #0e7469;
+  --color-verified-soft: #e2f3f0;
+  --color-inferred: #9a5d06;
+  --color-inferred-soft: #fbf1d9;
+
+  --color-series-1: #2a78d6;
+  --color-series-2: #eb6834;
+  --color-series-3: #1baf7a;
+  --color-series-4: #eda100;
+  --color-seq-1: #cde2fb;
+  --color-seq-2: #86b6ef;
+  --color-seq-3: #3987e5;
+  --color-seq-4: #1c5cab;
+  --color-seq-5: #0d366b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-canvas: #0a111d;
+    --color-surface: #111a28;
+    --color-sunken: #0d1522;
+    --color-line: #1f2c3f;
+    --color-line-strong: #2d3d55;
+    --color-ink: #e6ecf5;
+    --color-ink-2: #b2bdcd;
+    --color-ink-3: #7e8ba0;
+    --color-brand: #5b93f5;
+    --color-brand-strong: #86aef8;
+    --color-brand-soft: #142646;
+    --color-nav: #070e19;
+    --color-nav-2: #0f1b2d;
+    --color-nav-line: #182840;
+    --color-hot: #f0604f;
+    --color-hot-soft: #3a1714;
+    --color-hot-ink: #ff9b8f;
+    --color-warm: #ef8e3a;
+    --color-warm-soft: #37220d;
+    --color-warm-ink: #f8b77a;
+    --color-low: #3cb45e;
+    --color-low-soft: #10301a;
+    --color-low-ink: #7fd894;
+    --color-muted: #7b8698;
+    --color-muted-soft: #1a2433;
+    --color-demo: #9b7cf0;
+    --color-demo-soft: #231a3d;
+    --color-demo-ink: #c7b6fb;
+    --color-verified: #3fc0ad;
+    --color-verified-soft: #0e2b28;
+    --color-inferred: #e0a93d;
+    --color-inferred-soft: #2f230c;
+    --color-series-1: #3987e5;
+    --color-series-2: #d95926;
+    --color-series-3: #199e70;
+    --color-series-4: #c98500;
+    --color-seq-1: #184f95;
+    --color-seq-2: #1c5cab;
+    --color-seq-3: #3987e5;
+    --color-seq-4: #86b6ef;
+    --color-seq-5: #cde2fb;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #0a111d;
+  --color-surface: #111a28;
+  --color-sunken: #0d1522;
+  --color-line: #1f2c3f;
+  --color-line-strong: #2d3d55;
+  --color-ink: #e6ecf5;
+  --color-ink-2: #b2bdcd;
+  --color-ink-3: #7e8ba0;
+  --color-brand: #5b93f5;
+  --color-brand-strong: #86aef8;
+  --color-brand-soft: #142646;
+  --color-nav: #070e19;
+  --color-nav-2: #0f1b2d;
+  --color-nav-line: #182840;
+  --color-hot: #f0604f;
+  --color-hot-soft: #3a1714;
+  --color-hot-ink: #ff9b8f;
+  --color-warm: #ef8e3a;
+  --color-warm-soft: #37220d;
+  --color-warm-ink: #f8b77a;
+  --color-low: #3cb45e;
+  --color-low-soft: #10301a;
+  --color-low-ink: #7fd894;
+  --color-muted: #7b8698;
+  --color-muted-soft: #1a2433;
+  --color-demo: #9b7cf0;
+  --color-demo-soft: #231a3d;
+  --color-demo-ink: #c7b6fb;
+  --color-verified: #3fc0ad;
+  --color-verified-soft: #0e2b28;
+  --color-inferred: #e0a93d;
+  --color-inferred-soft: #2f230c;
+  --color-series-1: #3987e5;
+  --color-series-2: #d95926;
+  --color-series-3: #199e70;
+  --color-series-4: #c98500;
+  --color-seq-1: #184f95;
+  --color-seq-2: #1c5cab;
+  --color-seq-3: #3987e5;
+  --color-seq-4: #86b6ef;
+  --color-seq-5: #cde2fb;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+.scroll-thin {
+  scrollbar-width: thin;
+}
+@keyframes sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.radar-sweep {
+  animation: sweep 2.4s linear infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .radar-sweep,
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
+  }
+}
+svg {
+  display: inline-block;
+}
