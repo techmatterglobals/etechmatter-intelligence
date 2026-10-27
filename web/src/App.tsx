@@ -9,6 +9,7 @@ import { Admin } from './pages/Admin';
 import { Alerts } from './pages/Alerts';
 import { Analytics } from './pages/Analytics';
 import { Dashboard } from './pages/Dashboard';
+import Login from './pages/Login';
 import { MapPage } from './pages/MapPage';
 import { Opportunities } from './pages/Opportunities';
 import { OpportunityDetail } from './pages/OpportunityDetail';
@@ -42,7 +43,10 @@ function Routes() {
     case '/sources':
       return <Sources />;
     case '/analytics':
-      return <Analytics />;
+      return <Analytics />
+      ;
+    case '/login':
+  return <Login />;
     case '/admin':
     case '/settings':
       return <Admin />;

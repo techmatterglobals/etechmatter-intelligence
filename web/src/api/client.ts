@@ -27,7 +27,9 @@ export interface PublicConfig {
   ai: { name: string; model: string | null; configured: boolean; message: string };
   sam?: { baseUrl: string; intervalMinutes: number; dailyRequestLimit: number; noticeTypes: string; naicsCodes: string[]; fetchDescriptions: boolean };
 }
-
+export type AdminUser = User & {
+  passwordConfigured: boolean;
+};
 /** One contract, two implementations: HttpApi (Node backend) and StandaloneApi (in-browser engine). */
 export interface Api {
   readonly mode: 'server' | 'standalone';
@@ -67,8 +69,26 @@ export interface Api {
   markAlertsRead(): Promise<void>;
   settings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
-  users(): Promise<User[]>;
-  createUser(u: Omit<User, 'id'>): Promise<User>;
+  users(): Promise<AdminUser[]>;
+  createUser(
+  u: Omit<User, 'id'> & {
+    password: string;
+    confirmPassword: string;
+  },
+): Promise<User>;
+  updateUser(
+  id: string,
+  patch: Partial<Pick<User, 'name' | 'email' | 'role'>>
+): Promise<User>;
+logout(): Promise<{ success: boolean }>;
+deleteUser(id: string): Promise<{ deleted: boolean }>;
+resetUserPassword(
+  id: string,
+  password: string,
+  confirmPassword: string,
+): Promise<{ success: boolean }>;
+
+
 }
 
 export type { DashboardPayload };

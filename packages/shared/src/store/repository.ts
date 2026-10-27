@@ -75,6 +75,14 @@ export interface Repository {
   listUsers(): Promise<User[]>;
   createUser(u: Omit<User, 'id'>): Promise<User>;
 
+  updateUser(
+    id: string,
+    patch: Partial<Pick<User, 'name' | 'email' | 'role'>>
+  ): Promise<User | null>;
+
+  deleteUser(id: string): Promise<boolean>;
+
+
   // historical spending intelligence (kept separate from buying signals)
   upsertHistorical(records: HistoricalRecord[]): Promise<number>;
   listHistorical(limit: number): Promise<HistoricalRecord[]>;

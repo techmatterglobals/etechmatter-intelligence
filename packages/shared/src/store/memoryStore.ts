@@ -150,14 +150,58 @@ export class MemoryStore implements Repository {
     for (const e of this.events) if (ids === 'all' || ids.includes(e.id)) e.read = true;
   }
 
+
   async listUsers() {
-    return [...this.users];
+    return this.users.map(clone);
   }
+
   async createUser(u: Omit<User, 'id'>) {
-    const user = { ...u, id: newId('usr') };
+    const email = u.email.trim().toLowerCase();
+
+    if (this.users.some((user) => user.email.toLowerCase() === email)) {
+      throw new Error('A user with this email already exists');
+    }
+
+    const user = { ...u, email, id: newId('usr') };
     this.users.push(user);
-    return user;
+    return clone(user);
   }
+
+  async updateUser(
+    id: string,
+    patch: Partial<Pick<User, 'name' | 'email' | 'role'>>
+  ) {
+    const index = this.users.findIndex((user) => user.id === id);
+    if (index === -1) return null;
+
+    const email = patch.email?.trim().toLowerCase();
+
+    if (
+      email &&
+      this.users.some(
+        (user) => user.id !== id && user.email.toLowerCase() === email
+      )
+    ) {
+      throw new Error('A user with this email already exists');
+    }
+
+    this.users[index] = {
+      ...this.users[index],
+      ...patch,
+      ...(email ? { email } : {}),
+    };
+
+    return clone(this.users[index]);
+  }
+
+  async deleteUser(id: string) {
+    const index = this.users.findIndex((user) => user.id === id);
+    if (index === -1) return false;
+
+    this.users.splice(index, 1);
+    return true;
+  }
+
 
   async upsertHistorical(records: HistoricalRecord[]) {
     let n = 0;

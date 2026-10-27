@@ -9,7 +9,7 @@ import { send } from './http/router';
 import { createRepository, ensureSeeded } from './repo';
 import { buildApi } from './routes/api';
 import { SyncService } from './services/syncService';
-
+import { AuthService } from './services/authService';
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2',
@@ -17,11 +17,20 @@ const MIME: Record<string, string> = {
 
 export async function createApp() {
   const repo = await createRepository();
+  const authDb = (repo as any).authDb;
+
+if (!authDb) {
+  throw new Error(
+    'Authentication requires the Prisma repository and its database client.'
+  );
+}
+
+const auth = new AuthService(authDb);
   const { provider: ai, status: aiStatus } = createAIProvider();
   const connectors = createConnectors();
   await ensureSeeded(repo, ai);
   const sync = new SyncService(repo, connectors, ai);
-  const api = buildApi({ repo, sync, connectors, ai, aiStatus });
+  const api = buildApi({ repo, sync, connectors, ai, aiStatus, auth });
   const webDist = resolve(process.cwd(), env.serveWebDist);
 
   const server = createServer(async (req, res) => {

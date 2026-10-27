@@ -321,49 +321,328 @@ function RulesAdmin() {
   );
 }
 
+
+
 function UsersAdmin() {
   const { api, toast } = useApp();
   const { data, reload } = useAsync(() => api.users(), []);
-  const [f, setF] = useState({ name: '', email: '', role: 'SALES' as 'ADMIN' | 'SALES' | 'VIEWER' });
+
+  const [resetUser, setResetUser] = useState<{
+    id: string;
+    name: string;
+    email: string;
+  } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetting, setResetting] = useState(false);
+const [createPassword, setCreatePassword] = useState('');
+const [confirmCreatePassword, setConfirmCreatePassword] = useState('');
+  const emptyForm = {
+    name: '',
+    email: '',
+    role: 'SALES' as 'ADMIN' | 'SALES' | 'VIEWER',
+  };
+
+  const [f, setF] = useState(emptyForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
   if (!data) return <Spinner />;
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setF(emptyForm);
+  };
+
+  const handleEdit = (u: (typeof data)[number]) => {
+    setEditingId(u.id);
+    setF({ name: u.name, email: u.email, role: u.role });
+    document.getElementById('user-form')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  };
+
+  const handleDelete = async (u: (typeof data)[number]) => {
+    if (!window.confirm(`Delete user "${u.name}"? This action cannot be undone.`)) return;
+
+    try {
+      await api.deleteUser(u.id);
+      if (editingId === u.id) cancelEdit();
+      if (resetUser?.id === u.id) setResetUser(null);
+      toast(`Deleted ${u.name}`);
+      await reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!editingId) {
+      if (createPassword.length < 12 || createPassword.length > 256) {
+        toast('Password must be 12–256 characters long');
+        return;
+      }
+
+      if (createPassword !== confirmCreatePassword) {
+        toast('Passwords do not match');
+        return;
+      }
+    }
+
+    setSaving(true);
+
+    try {
+      if (editingId) {
+        await api.updateUser(editingId, f);
+        toast(`Updated ${f.name}`);
+      } else {
+        await api.createUser({
+          ...f,
+          password: createPassword,
+          confirmPassword: confirmCreatePassword,
+        });
+        toast(`Added ${f.name}`);
+      }
+
+      setCreatePassword('');
+      setConfirmCreatePassword('');
+      cancelEdit();
+      await reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!resetUser || resetting) return;
+
+    if (newPassword.length < 12 || newPassword.length > 256) {
+      toast('Password must be 12–256 characters long');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast('Passwords do not match');
+      return;
+    }
+
+    setResetting(true);
+    try {
+      await api.resetUserPassword(
+        resetUser.id,
+        newPassword,
+        confirmPassword,
+      );
+      toast(`Password reset for ${resetUser.email}. All sessions were invalidated.`);
+      setResetUser(null);
+      setNewPassword('');
+      setConfirmPassword('');
+      await reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <Card>
-      <CardHeader title="Users" eyebrow="Owners you can assign opportunities to" />
+      <CardHeader
+        title="Users"
+        eyebrow="Manage users, password status and account access"
+      />
+
       <ul className="flex flex-col divide-y divide-line">
         {data.map((u) => (
-          <li key={u.id} className="flex items-center justify-between py-2 text-sm">
-            <span>
-              <span className="font-medium text-ink">{u.name}</span> <span className="text-ink-3">{u.email}</span>
-            </span>
-            <Pill tone={u.role === 'ADMIN' ? 'brand' : 'muted'}>{u.role}</Pill>
+          <li
+            key={u.id}
+            className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-ink">{u.name}</div>
+              <div className="break-all text-ink-3">{u.email}</div>
+
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Pill tone={u.role === 'ADMIN' ? 'brand' : 'muted'}>
+                  {u.role}
+                </Pill>
+
+                <Pill tone={u.passwordConfigured ? 'low' : 'muted'}>
+                  {u.passwordConfigured ? 'Password configured' : 'Password not configured'}
+                </Pill>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => handleEdit(u)}
+              >
+                Edit
+              </Button>
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setResetUser({ id: u.id, name: u.name, email: u.email });
+                  setNewPassword('');
+                  setConfirmPassword('');
+                }}
+              >
+                Reset password
+              </Button>
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleDelete(u)}
+              >
+                Delete
+              </Button>
+            </div>
           </li>
         ))}
       </ul>
+
+      {resetUser && (
+        <form
+          className="mt-4 space-y-3 rounded-xl border border-line p-4"
+          onSubmit={handlePasswordReset}
+        >
+          <div>
+            <h3 className="font-semibold text-ink">Reset password</h3>
+            <p className="mt-1 text-sm text-ink-3">
+              Account: {resetUser.name} ({resetUser.email})
+            </p>
+            <p className="mt-1 text-xs text-ink-3">
+              Resetting the password will invalidate all existing sessions for this account.
+            </p>
+          </div>
+
+          <Field label="New password" htmlFor="reset-new-password">
+            <input
+              id="reset-new-password"
+              className={inputCls}
+              type="password"
+              autoComplete="new-password"
+              minLength={12}
+              maxLength={256}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+            />
+          </Field>
+
+          <Field label="Confirm new password" htmlFor="reset-confirm-password">
+            <input
+              id="reset-confirm-password"
+              className={inputCls}
+              type="password"
+              autoComplete="new-password"
+              minLength={12}
+              maxLength={256}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+            />
+          </Field>
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={resetting}>
+              {resetting ? 'Resetting...' : 'Confirm password reset'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={resetting}
+              onClick={() => {
+                setResetUser(null);
+                setNewPassword('');
+                setConfirmPassword('');
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
       <form
-        className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto]"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            await api.createUser(f);
-            toast(`Added ${f.name}`);
-            setF({ name: '', email: '', role: 'SALES' });
-            reload();
-          } catch (err) {
-            toast(err instanceof Error ? err.message : String(err));
-          }
-        }}
+        id="user-form"
+        className="mt-5 grid gap-3 rounded-xl border border-line p-4 sm:grid-cols-[1fr_1fr_8rem_auto]"
+        onSubmit={handleSubmit}
       >
-        <input id="u-name" className={inputCls} placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required aria-label="Name" />
-        <input id="u-email" type="email" className={inputCls} placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required aria-label="Email" />
-        <select id="u-role" className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as typeof f.role })} aria-label="Role">
-          <option>SALES</option>
-          <option>ADMIN</option>
-          <option>VIEWER</option>
+        <div className="sm:col-span-full">
+          <h3 className="font-semibold text-ink">
+            {editingId ? 'Update User' : 'Add New User'}
+          </h3>
+          <p className="mt-1 text-sm text-ink-3">
+            {editingId
+              ? 'Edit the selected user details and save your changes.'
+              : 'Enter details to create a new user.'}
+          </p>
+        </div>
+
+        <input
+          id="u-name"
+          className={inputCls}
+          placeholder="Name"
+          value={f.name}
+          onChange={(e) => setF({ ...f, name: e.target.value })}
+          required
+          aria-label="Name"
+        />
+
+        <input
+          id="u-email"
+          type="email"
+          className={inputCls}
+          placeholder="Email"
+          value={f.email}
+          onChange={(e) => setF({ ...f, email: e.target.value })}
+          required
+          aria-label="Email"
+        />
+
+        <select
+          id="u-role"
+          className={inputCls}
+          value={f.role}
+          onChange={(e) => setF({ ...f, role: e.target.value as typeof f.role })}
+          aria-label="Role"
+        >
+          <option value="SALES">SALES</option>
+          <option value="ADMIN">ADMIN</option>
+          <option value="VIEWER">VIEWER</option>
         </select>
-        <Button type="submit" icon={<LuPlus />}>
-          Add user
-        </Button>
+
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" disabled={saving}>
+            {saving ? 'Saving...' : editingId ? 'Update User' : 'Add User'}
+          </Button>
+
+          {editingId && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={cancelEdit}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+          )}
+        </div>
       </form>
     </Card>
   );
 }
+
+

@@ -1,0 +1,497 @@
+﻿import {
+  ActionError,
+  addNote,
+  alertRuleFrom,
+  analytics,
+  assignOwner,
+  buildDashboard,
+  createProductFromInput,
+  dashboardStats,
+  dismissDuplicate,
+  getOpportunityView,
+  importProductsCsv,
+  mergeDuplicate,
+  opportunitiesToCsv,
+  organizations,
+  PRODUCT_CSV_TEMPLATE,
+  rematchAll,
+  saveLead,
+  searchOpportunities,
+  setStatus,
+  stateSummary,
+  updatePipeline,
+  updateSettingsSafe,
+  type AIProvider,
+  type OpportunityQuery,
+  type PipelineStatus,
+  type Product,
+  type Repository,
+  type SourceConnector,
+} from '@etm/shared';
+import { publicConfig } from '../config/env';
+import { AuthService, type AuthUser } from '../services/authService';
+import { describeSources } from '../connectors/registry';
+import { HttpError, Router, type Handler, type Req } from '../http/router';
+import type { SyncService } from '../services/syncService';
+
+export interface ApiContext {
+  repo: Repository;
+  sync: SyncService;
+  connectors: SourceConnector[];
+  ai: AIProvider;
+  aiStatus: { name: string; model: string | null; configured: boolean; message: string };
+  auth: AuthService;
+}
+
+const arr = (q: URLSearchParams, k: string) => {
+  const v = q.getAll(k).flatMap((x) => x.split(',')).map((s) => s.trim()).filter(Boolean);
+  return v.length ? v : undefined;
+};
+const int = (q: URLSearchParams, k: string) => (q.get(k) ? parseInt(q.get(k)!, 10) : undefined);
+
+/** Query-string â†’ OpportunityQuery (arrays accept comma lists or repeated keys). */
+export function parseQuery(q: URLSearchParams): OpportunityQuery {
+  const s = (k: string) => q.get(k) ?? undefined;
+  return {
+    q: s('q'),
+    intent: arr(q, 'intent') as OpportunityQuery['intent'],
+    categories: arr(q, 'categories'),
+    sourceTypes: arr(q, 'sourceTypes') as OpportunityQuery['sourceTypes'],
+    sourceKeys: arr(q, 'sourceKeys'),
+    states: arr(q, 'states')?.map((x) => x.toUpperCase()),
+    orgTypes: arr(q, 'orgTypes') as OpportunityQuery['orgTypes'],
+    procurementTypes: arr(q, 'procurementTypes') as OpportunityQuery['procurementTypes'],
+    discovered: s('discovered') as OpportunityQuery['discovered'],
+    posted: s('posted') as OpportunityQuery['posted'],
+    dateFrom: s('dateFrom'),
+    dateTo: s('dateTo'),
+    deadlineWithin: s('deadlineWithin') as OpportunityQuery['deadlineWithin'],
+    qtyMin: int(q, 'qtyMin'),
+    qtyMax: int(q, 'qtyMax'),
+    match: arr(q, 'match') as OpportunityQuery['match'],
+    status: arr(q, 'status') as OpportunityQuery['status'],
+    owner: s('owner'),
+    saved: q.get('saved') === 'true' || undefined,
+    includeIrrelevant: q.get('includeIrrelevant') === 'true' || undefined,
+    includeMerged: q.get('includeMerged') === 'true' || undefined,
+    data: s('data') as OpportunityQuery['data'],
+    sort: s('sort') as OpportunityQuery['sort'],
+    page: int(q, 'page'),
+    pageSize: int(q, 'pageSize'),
+  };
+}
+
+const actorOf = (req: Req) => (typeof req.body?.actor === 'string' && req.body.actor) || 'Sales user';
+
+/** Maps shared ActionError â†’ HTTP status. */
+const wrap =
+  (h: Handler): Handler =>
+  async (req) => {
+    try {
+      return await h(req);
+    } catch (e) {
+      if (e instanceof ActionError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
+  };
+
+
+export function buildApi(ctx: ApiContext): Router {
+  const { repo, sync, auth } = ctx;
+  const r = new Router();
+
+  const readSessionToken = (req: Req): string | null => {
+    const cookie = req.raw.headers.cookie ?? '';
+    const match = cookie.match(/(?:^|;\s*)etm_session=([^;]+)/);
+
+    if (!match) return null;
+
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+  };
+
+  const cookieOptions = [
+    'Path=/api',
+    'HttpOnly',
+    'SameSite=Lax',
+    ...(process.env.NODE_ENV === 'production' ? ['Secure'] : []),
+  ].join('; ');
+
+  const protectedHandler = (path: string, handler: Handler): Handler =>
+    wrap(async (req) => {
+      const isPublic =
+        (req.method === 'GET' && path === '/api/health') ||
+        (req.method === 'POST' && path === '/api/auth/login') ||
+        (req.method === 'POST' && path === '/api/auth/verify-email');
+
+      if (isPublic) {
+        return handler(req);
+      }
+
+      const user = await auth.authenticate(readSessionToken(req));
+
+      if (!user) {
+        throw new HttpError(401, 'Authentication required');
+      }
+
+      const isAdminRoute =
+        path === '/api/users' ||
+        path.startsWith('/api/users/') ||
+        path === '/api/settings' ||
+        path.startsWith('/api/settings/');
+
+      if (isAdminRoute && user.role !== 'ADMIN') {
+        throw new HttpError(403, 'Admin access required');
+      }
+
+      return handler({
+        ...req,
+        body: {
+          ...(req.body ?? {}),
+          authenticatedUser: user,
+        },
+      });
+    });
+
+  const get = (p: string, h: Handler) =>
+    r.get(p, protectedHandler(p, h));
+
+  const post = (p: string, h: Handler) =>
+    r.post(p, protectedHandler(p, h));
+
+  const put = (p: string, h: Handler) =>
+    r.put(p, protectedHandler(p, h));
+
+  const del = (p: string, h: Handler) =>
+    r.delete(p, protectedHandler(p, h));
+
+  const sources = () =>
+    describeSources(repo, ctx.connectors, sync.nextRuns);
+
+
+  // ------------------------------------------------------------------ system
+  get('/api/health', async () => ({ ok: true, store: repo.kind, time: new Date().toISOString() }));
+  
+  // ------------------------------------------------------------------ auth
+
+  post('/api/auth/login', async (req) => {
+    const email =
+      typeof req.body?.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+
+    const password =
+      typeof req.body?.password === 'string'
+        ? req.body.password
+        : '';
+
+    if (!email || !password) {
+      throw new HttpError(400, 'Email and password are required');
+    }
+
+    try {
+      const result = await auth.login(email, password);
+
+      return {
+        status: 200,
+        body: { user: result.user },
+        headers: {
+          'set-cookie':
+            `etm_session=${encodeURIComponent(result.token)}; ` +
+            `${cookieOptions}; Expires=${result.expiresAt.toUTCString()}`,
+        },
+      };
+    } catch {
+      throw new HttpError(
+        401,
+        'Invalid email or password, or account not verified',
+      );
+    }
+  });
+// Reset a user's password (ADMIN only; protected by the existing middleware).
+post('/api/users/:id/password', async (req) => {
+  const b = req.body ?? {};
+
+  if (typeof b.password !== 'string') {
+    throw new HttpError(400, 'Password is required');
+  }
+
+  if (
+    typeof b.confirmPassword !== 'string' ||
+    b.password !== b.confirmPassword
+  ) {
+    throw new HttpError(400, 'Passwords do not match');
+  }
+
+  try {
+    await auth.resetUserPassword(req.params.id, b.password);
+    return { success: true };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User not found') {
+      throw new HttpError(404, 'User not found');
+    }
+    throw error;
+  }
+});
+  get('/api/auth/me', async (req) => {
+    const user = req.body?.authenticatedUser as AuthUser | undefined;
+
+    if (!user) {
+      throw new HttpError(401, 'Authentication required');
+    }
+
+    return { user };
+  });
+
+  post('/api/auth/logout', async (req) => {
+    await auth.logout(readSessionToken(req));
+
+    return {
+      status: 200,
+      body: { ok: true },
+      headers: {
+        'set-cookie': `etm_session=; ${cookieOptions}; Max-Age=0`,
+      },
+    };
+  });
+
+  post('/api/auth/verify-email', async (req) => {
+    const token =
+      typeof req.body?.token === 'string'
+        ? req.body.token
+        : '';
+
+    const password =
+      typeof req.body?.password === 'string'
+        ? req.body.password
+        : '';
+
+    if (!token || !password) {
+      throw new HttpError(
+        400,
+        'Verification token and password are required',
+      );
+    }
+
+    try {
+      const user = await auth.verifyEmail(token, password);
+      return { ok: true, user };
+    } catch {
+      throw new HttpError(
+        400,
+        'Verification link is invalid, expired, or already used',
+      );
+    }
+  });
+
+  get('/api/config', async () => ({ ...publicConfig(), ai: ctx.aiStatus, store: repo.kind }));
+
+  // ------------------------------------------------------------------ dashboard
+  get('/api/dashboard', async () =>
+    buildDashboard(repo, await sources(), { ai: ctx.aiStatus, store: repo.kind, activeSyncId: sync.activeRunId, schedulerRunning: sync.running }),
+  );
+
+  // ------------------------------------------------------------------ opportunities
+  get('/api/opportunities', async (req) => repo.listOpportunities(parseQuery(req.query)));
+  get('/api/opportunities/stats', async () => dashboardStats(await repo.aggregationRows(), await sources(), new Date(), { running: sync.running }));
+  get('/api/opportunities/hot', async (req) => repo.listOpportunities({ ...parseQuery(req.query), intent: ['HOT'], sort: 'score' }));
+  get('/api/opportunities/recent', async (req) => repo.listOpportunities({ ...parseQuery(req.query), sort: 'discovered' }));
+  get('/api/opportunities/export.csv', async (req) => ({
+    status: 200,
+    text: opportunitiesToCsv(await repo.exportRows(parseQuery(req.query), 10_000)),
+    headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="etechmatter-opportunities-${new Date().toISOString().slice(0, 10)}.csv"` },
+  }));
+  post('/api/opportunities/rematch', async () => rematchAll(repo));
+  get('/api/opportunities/:id', async (req) => getOpportunityView(repo, req.params.id));
+  post('/api/opportunities/:id/status', async (req) => setStatus(repo, req.params.id, req.body?.status as PipelineStatus, actorOf(req)));
+  post('/api/opportunities/:id/assign', async (req) => assignOwner(repo, req.params.id, (req.body?.owner as string) || null, actorOf(req)));
+  post('/api/opportunities/:id/notes', async (req) => addNote(repo, req.params.id, String(req.body?.body ?? ''), actorOf(req)));
+  post('/api/opportunities/:id/pipeline', async (req) => updatePipeline(repo, req.params.id, req.body ?? {}, actorOf(req)));
+  post('/api/opportunities/:id/save', async (req) => saveLead(repo, req.params.id, req.body?.saved !== false, actorOf(req)));
+  post('/api/opportunities/:id/merge', async (req) => mergeDuplicate(repo, req.params.id, String(req.body?.duplicateId ?? ''), actorOf(req)));
+  post('/api/opportunities/:id/dismiss-duplicate', async (req) => dismissDuplicate(repo, req.params.id, String(req.body?.duplicateId ?? '')));
+
+  // ------------------------------------------------------------------ search / map / orgs / analytics
+  post('/api/search', async (req) =>
+    searchOpportunities(repo, String(req.body?.query ?? ''), { ...(req.body?.filters ?? {}), page: req.body?.page, pageSize: req.body?.pageSize ?? 20 }),
+  );
+  get('/api/map', async () => ({ states: stateSummary(await repo.aggregationRows()) }));
+  get('/api/organizations', async () => organizations(await repo.aggregationRows()));
+  get('/api/analytics', async () => analytics(await repo.aggregationRows(), await repo.listHistorical(500)));
+  get('/api/historical', async () => repo.listHistorical(200));
+
+  // ------------------------------------------------------------------ products & categories
+  get('/api/products', async () => repo.listProducts());
+  get('/api/products/template.csv', async () => ({
+    status: 200,
+    text: PRODUCT_CSV_TEMPLATE,
+    headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="etechmatter-product-template.csv"' },
+  }));
+  post('/api/products', async (req) => createProductFromInput(repo, req.body ?? {}));
+  put('/api/products/:id', async (req) => {
+    const p = await repo.updateProduct(req.params.id, req.body as Partial<Product>);
+    if (!p) throw new HttpError(404, 'Product not found');
+    return p;
+  });
+  del('/api/products/:id', async (req) => ({ deleted: await repo.deleteProduct(req.params.id) }));
+  post('/api/products/import', async (req) =>
+    importProductsCsv(repo, typeof req.body === 'string' ? req.body : String(req.body?.csv ?? ''), !!req.body?.replaceDemo),
+  );
+  get('/api/categories', async () => (await repo.getSettings()).categories);
+  post('/api/categories', async (req) => {
+    const name = String(req.body?.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'Category name required');
+    const s = await repo.getSettings();
+    return (await updateSettingsSafe(repo, { categories: [...s.categories, name] })).categories;
+  });
+
+  // ------------------------------------------------------------------ sources & sync
+  get('/api/sources', async () => sources());
+  get('/api/sources/runs', async (req) => repo.listRuns(int(req.query, 'limit') ?? 50, req.query.get('source') ?? undefined));
+  post('/api/sources/test', async (req) => {
+    const key = String(req.body?.key ?? '');
+    const c = ctx.connectors.find((x) => x.key === key);
+    if (!c) throw new HttpError(404, 'Unknown source');
+    const cfg = (await repo.getSourceConfigs()).find((x) => x.key === key);
+    const config = cfg?.config ?? {};
+    const res = await c.test(config);
+    await repo.upsertSourceConfig(key, { config });
+    return { key, ...res, testedAt: new Date().toISOString() };
+  });
+  put('/api/sources/:key', async (req) => {
+    const c = ctx.connectors.find((x) => x.key === req.params.key);
+    if (!c) throw new HttpError(404, 'Unknown source');
+    const b = req.body ?? {};
+    const cur = (await repo.getSourceConfigs()).find((x) => x.key === c.key);
+    const patch: Record<string, unknown> = {};
+    if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
+    if (b.intervalMinutes !== undefined) patch.intervalMinutes = Math.max(0, Math.min(10_080, Number(b.intervalMinutes) || 0));
+    if (b.config && typeof b.config === 'object') {
+      // secrets are never accepted through the API â€” they belong in server env vars
+      const clean = Object.fromEntries(Object.entries(b.config).filter(([k]) => !/key|secret|token|password/i.test(k)));
+      patch.config = { ...(cur?.config ?? {}), ...clean };
+    }
+    await repo.upsertSourceConfig(c.key, patch);
+    return (await sources()).find((s) => s.key === c.key);
+  });
+  post('/api/sync', async (req) => {
+    const keys = Array.isArray(req.body?.sources) && req.body.sources.length ? (req.body.sources as string[]) : undefined;
+    return sync.start('MANUAL', keys);
+  });
+  get('/api/sync/status', async () => ({ activeRunId: sync.activeRunId, schedulerRunning: sync.running, nextRuns: sync.nextRuns }));
+  get('/api/sync/:runId', async (req) => {
+    const p = sync.getProgress(req.params.runId);
+    if (!p) throw new HttpError(404, 'Unknown sync run');
+    return p;
+  });
+
+  // ------------------------------------------------------------------ alerts
+  get('/api/alerts', async () => repo.listAlertRules());
+  post('/api/alerts', async (req) => repo.saveAlertRule(alertRuleFrom(req.body ?? {})));
+  put('/api/alerts/:id', async (req) => {
+    const cur = (await repo.listAlertRules()).find((x) => x.id === req.params.id);
+    if (!cur) throw new HttpError(404, 'Alert not found');
+    return repo.saveAlertRule(alertRuleFrom(req.body ?? {}, cur));
+  });
+  del('/api/alerts/:id', async (req) => ({ deleted: await repo.deleteAlertRule(req.params.id) }));
+  get('/api/alerts/events', async (req) => repo.listAlertEvents(int(req.query, 'limit') ?? 50));
+  post('/api/alerts/events/read', async (req) => {
+    await repo.markAlertEventsRead(req.body?.ids ?? 'all');
+    return { ok: true };
+  });
+
+  // ------------------------------------------------------------------ admin
+  
+  // ------------------------------------------------------------------ admin
+  get('/api/settings', async () => repo.getSettings());
+  put('/api/settings', async (req) =>
+    updateSettingsSafe(repo, req.body ?? {})
+  );
+
+  // List users
+  get('/api/users', async () => repo.listUsers());
+
+  // Create user
+  post('/api/users', async (req) => {
+    const b = req.body ?? {};
+
+    if (
+      typeof b.name !== 'string' ||
+      !b.name.trim() ||
+      typeof b.email !== 'string' ||
+      !b.email.trim()
+    ) {
+      throw new HttpError(400, 'Valid name and email required');
+    }
+
+    const role = ['ADMIN', 'SALES', 'VIEWER'].includes(b.role)
+      ? b.role
+      : 'SALES';
+
+    return repo.createUser({
+      name: b.name.trim(),
+      email: b.email.trim().toLowerCase(),
+      role,
+    });
+  });
+
+  // Update user
+  put('/api/users/:id', async (req) => {
+    const b = req.body ?? {};
+    const patch: {
+      name?: string;
+      email?: string;
+      role?: 'ADMIN' | 'SALES' | 'VIEWER';
+    } = {};
+
+    if (b.name !== undefined) {
+      if (typeof b.name !== 'string' || !b.name.trim()) {
+        throw new HttpError(400, 'Valid name required');
+      }
+      patch.name = b.name.trim();
+    }
+
+    if (b.email !== undefined) {
+      if (typeof b.email !== 'string' || !b.email.trim()) {
+        throw new HttpError(400, 'Valid email required');
+      }
+      patch.email = b.email.trim().toLowerCase();
+    }
+
+    if (b.role !== undefined) {
+      if (
+        typeof b.role !== 'string' ||
+        !['ADMIN', 'SALES', 'VIEWER'].includes(b.role)
+      ) {
+        throw new HttpError(400, 'Invalid role');
+      }
+      patch.role = b.role;
+    }
+
+    const user = await repo.updateUser(req.params.id, patch);
+
+    if (!user) {
+      throw new HttpError(404, 'User not found');
+    }
+
+    return user;
+  });
+
+  // Delete user
+  del('/api/users/:id', async (req) => {
+    const deleted = await repo.deleteUser(req.params.id);
+
+    if (!deleted) {
+      throw new HttpError(404, 'User not found');
+    }
+
+    return { deleted: true };
+  });
+
+  return r;
+
+}
+

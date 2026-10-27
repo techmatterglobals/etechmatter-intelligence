@@ -14,8 +14,16 @@ model User {
   id        String   @id @default(cuid())
   name      String
   email     String   @unique
-  role      String   @default("SALES") // ADMIN | SALES | VIEWER
+  role      String   @default("SALES")
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  passwordHash        String?
+  emailVerifiedAt     DateTime?
+  pendingPasswordHash String?
+
+  verificationTokens EmailVerificationToken[]
+  sessions           AuthSession[]
 }
 
 model Organization {
@@ -261,14 +269,14 @@ model OpportunityScore {
 }
 
 model AIAnalysis {
-  id                   String      @id @default(cuid())
-  opportunityId        String
-  opportunity          Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  provider             String
-  documentKind         String
-  summary              String
-  reasoning            String[]
-  createdAt            DateTime    @default(now())
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  provider      String
+  documentKind  String
+  summary       String
+  reasoning     String[]
+  createdAt     DateTime    @default(now())
 
   @@index([opportunityId])
 }
@@ -387,4 +395,29 @@ model HistoricalAward {
 model AppSetting {
   key   String @id
   value Json
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

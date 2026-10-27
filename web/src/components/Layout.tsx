@@ -2,7 +2,7 @@ import type { AlertEvent } from '@etm/shared';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   LuBell, LuBuilding2, LuChartColumn, LuFlame, LuLayoutDashboard, LuListFilter, LuMap, LuMenu, LuPackage, LuRadioTower,
-  LuRefreshCw, LuSearch, LuSettings, LuSquareKanban, LuX, LuBellRing,
+  LuRefreshCw, LuSearch, LuSettings, LuSquareKanban, LuX, LuBellRing, LuLogIn ,
 } from 'react-icons/lu';
 import { cn, timeAgo } from '../lib/format';
 import { useApp } from '../lib/appContext';
@@ -20,6 +20,7 @@ const NAV = [
   { to: '/alerts', label: 'Alerts', icon: LuBell },
   { to: '/sources', label: 'Sources', icon: LuRadioTower },
   { to: '/analytics', label: 'Analytics', icon: LuChartColumn },
+  { to: '/login', label: 'Login', icon: LuLogIn },
   { to: '/admin', label: 'Settings', icon: LuSettings },
 ];
 
@@ -180,7 +181,53 @@ function Notifications() {
 }
 
 function Topbar({ onMenu }: { onMenu: () => void }) {
-  const { openSync } = useApp();
+  const { openSync ,api } = useApp();
+const handleLogout = async () => {
+  try {
+    await api.logout();
+    setCurrentUser(null);
+    navigate('/login');
+  } catch (error) {
+    console.error('Logout failed:', error);
+  }
+};
+const [currentUser, setCurrentUser] = useState<{
+  name: string;
+  email?: string;
+  role?: string;
+} | null>(null);
+
+useEffect(() => {
+  let active = true;
+
+  fetch('/api/auth/me', {
+    credentials: 'include',
+  })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      return response.json();
+    })
+    .then((data) => {
+      if (active && data?.user) {
+        setCurrentUser(data.user);
+      }
+    })
+    .catch(() => {
+      if (active) setCurrentUser(null);
+    });
+
+  return () => {
+    active = false;
+  };
+}, []);
+
+const initials =
+  currentUser?.name
+    ?.trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'U';
   const [q, setQ] = useState('');
   return (
     <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-surface/95 px-4 py-2.5 backdrop-blur" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
@@ -212,9 +259,36 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
         <LuRefreshCw aria-hidden /> <span className="hidden sm:inline">SYNC NOW</span>
       </button>
       <Notifications />
-      <div className="hidden md:flex items-center gap-2 pl-1" title="Signed in as Muhammad Ali (Admin)">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-nav text-xs font-semibold text-white">MA</div>
+      <div
+  className="hidden md:flex items-center gap-2 pl-1"
+  title={
+    currentUser
+      ? `${currentUser.name}${currentUser.role ? ` (${currentUser.role})` : ''}`
+      : 'Current user'
+  }
+>
+  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-nav text-xs font-semibold text-white">
+    {initials}
+  </div>
+<button
+  type="button"
+  onClick={handleLogout}
+  className="rounded-md border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-sunken"
+>
+  Logout
+</button>
+  <div className="min-w-0 max-w-40">
+    <div className="truncate text-sm font-medium text-ink">
+      {currentUser?.name || 'Loading user...'}
+    </div>
+
+    {currentUser?.role && (
+      <div className="text-[11px] text-ink-3">
+        {currentUser.role}
       </div>
+    )}
+  </div>
+</div>
     </header>
   );
 }

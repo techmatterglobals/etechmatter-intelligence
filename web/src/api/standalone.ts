@@ -207,6 +207,45 @@ export const standaloneApi: Api = {
   markAlertsRead: () => wrap(() => repo.markAlertEventsRead('all')),
   settings: () => wrap(() => repo.getSettings()),
   updateSettings: (patch) => wrap(() => updateSettingsSafe(repo, patch)),
-  users: () => wrap(() => repo.listUsers()),
+  users: () =>
+  wrap(async () =>
+    (await repo.listUsers()).map((user) => ({
+      ...user,
+      passwordConfigured: false,
+    })),
+  ),
   createUser: (u) => wrap(() => repo.createUser(u)),
+  updateUser: (id, patch) =>
+    wrap(async () => {
+      const user = await repo.updateUser(id, patch);
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      return user;
+    }),
+
+  deleteUser: (id) =>
+    wrap(async () => {
+      const deleted = await repo.deleteUser(id);
+
+      if (!deleted) {
+        throw new Error('User not found');
+      }
+
+      return { deleted: true };
+    }),
+    logout: async () => {
+  throw new Error('Logout requires the server-backed API.');
+},
+  resetUserPassword: async (
+    _id: string,
+    _password: string,
+    _confirmPassword: string,
+  ): Promise<{ success: boolean }> => {
+    throw new Error(
+      'Password reset is not available in standalone mode. Use the server-backed API.',
+    );
+  },
 };

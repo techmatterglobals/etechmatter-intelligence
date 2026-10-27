@@ -3,6 +3,9 @@ import { after, before, test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 
 process.env.DATA_STORE = 'memory';
+process.env.SEED_DEMO_DATA = 'true';
+process.env.DEMO_FEED_ENABLED = 'true';
+process.env.AGGREGATED_PROCUREMENT_ENABLED = 'false';
 process.env.SCHEDULER_ENABLED = 'false';
 process.env.USASPENDING_ENABLED = 'false';
 process.env.SAM_API_KEY = '';
@@ -20,12 +23,12 @@ after(() => close());
 
 const get = async (p: string) => {
   const r = await fetch(base + p);
-  assert.equal(r.status, 200, `${p} → ${r.status}`);
+  assert.equal(r.status, 200, `${p} â†’ ${r.status}`);
   return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
 };
 const post = async (p: string, body: unknown, status = 200) => {
   const r = await fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  assert.equal(r.status, status, `${p} → ${r.status}`);
+  assert.equal(r.status, status, `${p} â†’ ${r.status}`);
   return r.json();
 };
 

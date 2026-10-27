@@ -1,4 +1,4 @@
-import {
+﻿import {
   ActionError,
   addNote,
   alertRuleFrom,
@@ -29,6 +29,7 @@ import {
   type SourceConnector,
 } from '@etm/shared';
 import { publicConfig } from '../config/env';
+import { AuthService, type AuthUser } from '../services/authService';
 import { describeSources } from '../connectors/registry';
 import { HttpError, Router, type Handler, type Req } from '../http/router';
 import type { SyncService } from '../services/syncService';
@@ -39,6 +40,7 @@ export interface ApiContext {
   connectors: SourceConnector[];
   ai: AIProvider;
   aiStatus: { name: string; model: string | null; configured: boolean; message: string };
+  auth: AuthService;
 }
 
 const arr = (q: URLSearchParams, k: string) => {
@@ -47,7 +49,7 @@ const arr = (q: URLSearchParams, k: string) => {
 };
 const int = (q: URLSearchParams, k: string) => (q.get(k) ? parseInt(q.get(k)!, 10) : undefined);
 
-/** Query-string → OpportunityQuery (arrays accept comma lists or repeated keys). */
+/** Query-string â†’ OpportunityQuery (arrays accept comma lists or repeated keys). */
 export function parseQuery(q: URLSearchParams): OpportunityQuery {
   const s = (k: string) => q.get(k) ?? undefined;
   return {
@@ -81,7 +83,7 @@ export function parseQuery(q: URLSearchParams): OpportunityQuery {
 
 const actorOf = (req: Req) => (typeof req.body?.actor === 'string' && req.body.actor) || 'Sales user';
 
-/** Maps shared ActionError → HTTP status. */
+/** Maps shared ActionError â†’ HTTP status. */
 const wrap =
   (h: Handler): Handler =>
   async (req) => {
@@ -93,17 +95,198 @@ const wrap =
     }
   };
 
+
 export function buildApi(ctx: ApiContext): Router {
-  const { repo, sync } = ctx;
+  const { repo, sync, auth } = ctx;
   const r = new Router();
-  const get = (p: string, h: Handler) => r.get(p, wrap(h));
-  const post = (p: string, h: Handler) => r.post(p, wrap(h));
-  const put = (p: string, h: Handler) => r.put(p, wrap(h));
-  const del = (p: string, h: Handler) => r.delete(p, wrap(h));
-  const sources = () => describeSources(repo, ctx.connectors, sync.nextRuns);
+
+  const readSessionToken = (req: Req): string | null => {
+    const cookie = req.raw.headers.cookie ?? '';
+    const match = cookie.match(/(?:^|;\s*)etm_session=([^;]+)/);
+
+    if (!match) return null;
+
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+  };
+
+  const cookieOptions = [
+    'Path=/api',
+    'HttpOnly',
+    'SameSite=Lax',
+    ...(process.env.NODE_ENV === 'production' ? ['Secure'] : []),
+  ].join('; ');
+
+  const protectedHandler = (path: string, handler: Handler): Handler =>
+    wrap(async (req) => {
+      const isPublic =
+        (req.method === 'GET' && path === '/api/health') ||
+        (req.method === 'POST' && path === '/api/auth/login') ||
+        (req.method === 'POST' && path === '/api/auth/verify-email');
+
+      if (isPublic) {
+        return handler(req);
+      }
+
+      const user = await auth.authenticate(readSessionToken(req));
+
+      if (!user) {
+        throw new HttpError(401, 'Authentication required');
+      }
+
+      const isAdminRoute =
+        path === '/api/users' ||
+        path.startsWith('/api/users/') ||
+        path === '/api/settings' ||
+        path.startsWith('/api/settings/');
+
+      if (isAdminRoute && user.role !== 'ADMIN') {
+        throw new HttpError(403, 'Admin access required');
+      }
+
+      return handler({
+        ...req,
+        body: {
+          ...(req.body ?? {}),
+          authenticatedUser: user,
+        },
+      });
+    });
+
+  const get = (p: string, h: Handler) =>
+    r.get(p, protectedHandler(p, h));
+
+  const post = (p: string, h: Handler) =>
+    r.post(p, protectedHandler(p, h));
+
+  const put = (p: string, h: Handler) =>
+    r.put(p, protectedHandler(p, h));
+
+  const del = (p: string, h: Handler) =>
+    r.delete(p, protectedHandler(p, h));
+
+  const sources = () =>
+    describeSources(repo, ctx.connectors, sync.nextRuns);
+
 
   // ------------------------------------------------------------------ system
   get('/api/health', async () => ({ ok: true, store: repo.kind, time: new Date().toISOString() }));
+  
+  // ------------------------------------------------------------------ auth
+
+  post('/api/auth/login', async (req) => {
+    const email =
+      typeof req.body?.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+
+    const password =
+      typeof req.body?.password === 'string'
+        ? req.body.password
+        : '';
+
+    if (!email || !password) {
+      throw new HttpError(400, 'Email and password are required');
+    }
+
+    try {
+      const result = await auth.login(email, password);
+
+      return {
+        status: 200,
+        body: { user: result.user },
+        headers: {
+          'set-cookie':
+            `etm_session=${encodeURIComponent(result.token)}; ` +
+            `${cookieOptions}; Expires=${result.expiresAt.toUTCString()}`,
+        },
+      };
+    } catch {
+      throw new HttpError(
+        401,
+        'Invalid email or password, or account not verified',
+      );
+    }
+  });
+// Reset a user's password (ADMIN only; protected by the existing middleware).
+post('/api/users/:id/password', async (req) => {
+  const b = req.body ?? {};
+
+  if (typeof b.password !== 'string') {
+    throw new HttpError(400, 'Password is required');
+  }
+
+  if (
+    typeof b.confirmPassword !== 'string' ||
+    b.password !== b.confirmPassword
+  ) {
+    throw new HttpError(400, 'Passwords do not match');
+  }
+
+  try {
+    await auth.resetUserPassword(req.params.id, b.password);
+    return { success: true };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User not found') {
+      throw new HttpError(404, 'User not found');
+    }
+    throw error;
+  }
+});
+  get('/api/auth/me', async (req) => {
+    const user = req.body?.authenticatedUser as AuthUser | undefined;
+
+    if (!user) {
+      throw new HttpError(401, 'Authentication required');
+    }
+
+    return { user };
+  });
+
+  post('/api/auth/logout', async (req) => {
+    await auth.logout(readSessionToken(req));
+
+    return {
+      status: 200,
+      body: { ok: true },
+      headers: {
+        'set-cookie': `etm_session=; ${cookieOptions}; Max-Age=0`,
+      },
+    };
+  });
+
+  post('/api/auth/verify-email', async (req) => {
+    const token =
+      typeof req.body?.token === 'string'
+        ? req.body.token
+        : '';
+
+    const password =
+      typeof req.body?.password === 'string'
+        ? req.body.password
+        : '';
+
+    if (!token || !password) {
+      throw new HttpError(
+        400,
+        'Verification token and password are required',
+      );
+    }
+
+    try {
+      const user = await auth.verifyEmail(token, password);
+      return { ok: true, user };
+    } catch {
+      throw new HttpError(
+        400,
+        'Verification link is invalid, expired, or already used',
+      );
+    }
+  });
+
   get('/api/config', async () => ({ ...publicConfig(), ai: ctx.aiStatus, store: repo.kind }));
 
   // ------------------------------------------------------------------ dashboard
@@ -187,7 +370,7 @@ export function buildApi(ctx: ApiContext): Router {
     if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
     if (b.intervalMinutes !== undefined) patch.intervalMinutes = Math.max(0, Math.min(10_080, Number(b.intervalMinutes) || 0));
     if (b.config && typeof b.config === 'object') {
-      // secrets are never accepted through the API — they belong in server env vars
+      // secrets are never accepted through the API â€” they belong in server env vars
       const clean = Object.fromEntries(Object.entries(b.config).filter(([k]) => !/key|secret|token|password/i.test(k)));
       patch.config = { ...(cur?.config ?? {}), ...clean };
     }
@@ -221,14 +404,94 @@ export function buildApi(ctx: ApiContext): Router {
   });
 
   // ------------------------------------------------------------------ admin
+  
+  // ------------------------------------------------------------------ admin
   get('/api/settings', async () => repo.getSettings());
-  put('/api/settings', async (req) => updateSettingsSafe(repo, req.body ?? {}));
-  get('/api/users', async () => repo.listUsers());
+  put('/api/settings', async (req) =>
+    updateSettingsSafe(repo, req.body ?? {})
+  );
+
+  // List users
+  get('/api/users', async () => auth.listAdminUsers());
+
+  // Create user
   post('/api/users', async (req) => {
     const b = req.body ?? {};
-    if (!b.email || !b.name) throw new HttpError(400, 'name and email required');
-    return repo.createUser({ name: String(b.name), email: String(b.email), role: ['ADMIN', 'SALES', 'VIEWER'].includes(b.role) ? b.role : 'SALES' });
+
+    if (
+      typeof b.name !== 'string' ||
+      !b.name.trim() ||
+      typeof b.email !== 'string' ||
+      !b.email.trim()
+    ) {
+      throw new HttpError(400, 'Valid name and email required');
+    }
+
+    const role = ['ADMIN', 'SALES', 'VIEWER'].includes(b.role)
+      ? b.role
+      : 'SALES';
+
+    return repo.createUser({
+      name: b.name.trim(),
+      email: b.email.trim().toLowerCase(),
+      role,
+    });
+  });
+
+  // Update user
+  put('/api/users/:id', async (req) => {
+    const b = req.body ?? {};
+    const patch: {
+      name?: string;
+      email?: string;
+      role?: 'ADMIN' | 'SALES' | 'VIEWER';
+    } = {};
+
+    if (b.name !== undefined) {
+      if (typeof b.name !== 'string' || !b.name.trim()) {
+        throw new HttpError(400, 'Valid name required');
+      }
+      patch.name = b.name.trim();
+    }
+
+    if (b.email !== undefined) {
+      if (typeof b.email !== 'string' || !b.email.trim()) {
+        throw new HttpError(400, 'Valid email required');
+      }
+      patch.email = b.email.trim().toLowerCase();
+    }
+
+    if (b.role !== undefined) {
+      if (
+        typeof b.role !== 'string' ||
+        !['ADMIN', 'SALES', 'VIEWER'].includes(b.role)
+      ) {
+        throw new HttpError(400, 'Invalid role');
+      }
+      patch.role = b.role;
+    }
+
+    const user = await repo.updateUser(req.params.id, patch);
+
+    if (!user) {
+      throw new HttpError(404, 'User not found');
+    }
+
+    return user;
+  });
+
+  // Delete user
+  del('/api/users/:id', async (req) => {
+    const deleted = await repo.deleteUser(req.params.id);
+
+    if (!deleted) {
+      throw new HttpError(404, 'User not found');
+    }
+
+    return { deleted: true };
   });
 
   return r;
+
 }
+
