@@ -1,0 +1,390 @@
+// ETechMatter Intelligence — PostgreSQL schema
+// Run:  npx prisma migrate dev --name init   (then: npm run db:seed)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String   @default("SALES") // ADMIN | SALES | VIEWER
+  createdAt DateTime @default(now())
+}
+
+model Organization {
+  id            String        @id @default(cuid())
+  key           String        @unique // normalized name
+  name          String
+  type          String        @default("Unknown")
+  website       String?
+  industry      String?
+  employeeCount Int?
+  city          String?
+  state         String?
+  isDemo        Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  opportunities Opportunity[]
+  contacts      Contact[]
+
+  @@index([state])
+  @@index([type])
+}
+
+model PipelineStage {
+  id    String @id @default(cuid())
+  key   String @unique // NEW, REVIEWED, CONTACTED, QUOTED, NEGOTIATION, WON, LOST
+  label String
+  order Int
+}
+
+model Opportunity {
+  id          String @id
+  title       String
+  description String
+
+  // source & provenance
+  sourceKey        String
+  source           String
+  sourceUrl        String?
+  sourceId         String
+  sourceType       String
+  sourceConfidence String
+  isDemo           Boolean @default(false)
+
+  publishedAt     DateTime?
+  updatedAt       DateTime? // source-side update time
+  discoveredAt    DateTime
+  lastCheckedAt   DateTime
+  deadline        DateTime?
+  createdAt       DateTime  @default(now())
+  recordUpdatedAt DateTime  @updatedAt
+
+  // organization (denormalized for fast filtering) + relation
+  organizationId      String?
+  organization        Organization? @relation(fields: [organizationId], references: [id])
+  organizationName    String?
+  organizationWebsite String?
+  organizationType    String        @default("Unknown")
+  industry            String?
+  employeeCount       Int?
+  city                String?
+  state               String?
+  zipCode             String?
+  country             String?
+
+  // primary buyer (only when publicly stated in the source)
+  buyerName     String?
+  buyerTitle    String?
+  buyerEmail    String?
+  buyerPhone    String?
+  buyerLinkedin String?
+
+  // requirement
+  requirementSummary String
+  hardwareCategory   String?
+  categories         String[]
+  productsRequested  String[]
+  brandsRequested    String[]
+  modelsRequested    String[]
+  partNumbers        String[]
+  quantity           Int?
+  budget             Float?
+  currency           String   @default("USD")
+  procurementType    String
+  documentKind       String
+
+  // scores
+  intentLevel               String
+  intentScore               Int
+  urgencyScore              Int
+  urgencyLabel              String
+  matchScore                Int
+  matchLevel                String
+  overallOpportunityScore   Int
+  estimatedOpportunityValue Float?
+  estimatedValueBasis       String?
+
+  // intelligence
+  aiSummary    String
+  aiReasoning  String[]
+  aiProvider   String
+  whyItMatters String[]
+  nextAction   String
+
+  // structured detail kept as JSON (full fidelity for the UI)
+  items               Json
+  contactsJson        Json
+  requirementDetails  Json
+  fieldProvenance     Json
+  scoreReasonsJson    Json
+  productMatchesJson  Json
+  duplicateCandidates Json
+  hasDuplicates       Boolean @default(false)
+  mergedIntoId        String?
+  mergedSources       Json
+
+  // pipeline
+  status            String    @default("NEW")
+  owner             String?
+  saved             Boolean   @default(false)
+  lastContactedAt   DateTime?
+  nextFollowUp      DateTime?
+  quoteValue        Float?
+  expectedCloseDate DateTime?
+
+  evidence   OpportunityEvidence[]
+  scores     OpportunityScore[]
+  products   OpportunityProduct[]
+  contacts   OpportunityContact[]
+  analyses   AIAnalysis[]
+  notes      Note[]
+  activities SalesActivity[]
+
+  @@unique([sourceKey, sourceId])
+  @@index([intentLevel, overallOpportunityScore])
+  @@index([discoveredAt])
+  @@index([publishedAt])
+  @@index([deadline])
+  @@index([state])
+  @@index([sourceType])
+  @@index([status])
+  @@index([matchLevel])
+  @@index([organizationType])
+  @@index([quantity])
+  @@index([isDemo])
+}
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id             String               @id @default(cuid())
+  sku            String               @unique
+  manufacturer   String
+  model          String
+  partNumber     String?
+  category       String
+  description    String
+  specifications String?
+  price          Float?
+  availability   String?
+  moq            Int?
+  warranty       String?
+  url            String?
+  isDemo         Boolean              @default(false)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  opportunities  OpportunityProduct[]
+
+  @@index([category])
+  @@index([manufacturer])
+  @@index([partNumber])
+}
+
+model OpportunityProduct {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  level         String // EXACT | HIGH | ALTERNATIVE
+  score         Int
+  requestedItem String
+  reason        String
+
+  @@index([opportunityId])
+  @@index([productId])
+}
+
+model Contact {
+  id             String               @id @default(cuid())
+  name           String?
+  title          String?
+  email          String?
+  phone          String?
+  linkedin       String?
+  provenance     String               @default("SOURCE_VERIFIED")
+  organizationId String?
+  organization   Organization?        @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime             @default(now())
+  opportunities  OpportunityContact[]
+
+  @@index([email])
+}
+
+model OpportunityContact {
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role          String?
+  isPrimary     Boolean     @default(false)
+
+  @@id([opportunityId, contactId])
+}
+
+model OpportunityEvidence {
+  id            String      @id
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceUrl     String?
+  sourceName    String
+  snippet       String
+  field         String?
+  publishedAt   DateTime?
+  retrievedAt   DateTime
+
+  @@index([opportunityId])
+}
+
+model OpportunityScore {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  code          String
+  label         String
+  points        Int
+
+  @@index([opportunityId])
+}
+
+model AIAnalysis {
+  id                   String      @id @default(cuid())
+  opportunityId        String
+  opportunity          Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  provider             String
+  documentKind         String
+  summary              String
+  reasoning            String[]
+  createdAt            DateTime    @default(now())
+
+  @@index([opportunityId])
+}
+
+model Note {
+  id            String      @id
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  author        String
+  body          String
+  createdAt     DateTime    @default(now())
+
+  @@index([opportunityId])
+}
+
+model SalesActivity {
+  id            String      @id
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  type          String
+  actor         String
+  detail        String
+  createdAt     DateTime    @default(now())
+
+  @@index([opportunityId, createdAt])
+}
+
+model Source {
+  key             String      @id
+  enabled         Boolean     @default(true)
+  intervalMinutes Int         @default(60)
+  config          Json        @default("{}")
+  lastRunAt       DateTime?
+  lastSuccessAt   DateTime?
+  lastRunNew      Int?
+  lastStatus      String?
+  lastMessage     String?
+  runs            SourceRun[]
+}
+
+model SourceRun {
+  id         String    @id
+  sourceKey  String
+  source     Source    @relation(fields: [sourceKey], references: [key], onDelete: Cascade)
+  startedAt  DateTime
+  finishedAt DateTime?
+  status     String
+  fetched    Int       @default(0)
+  created    Int       @default(0)
+  updated    Int       @default(0)
+  duplicates Int       @default(0)
+  irrelevant Int       @default(0)
+  message    String    @default("")
+  trigger    String
+
+  @@index([sourceKey, startedAt])
+  @@index([startedAt])
+}
+
+model Alert {
+  id              String       @id
+  name            String
+  categories      String[]
+  states          String[]
+  intentLevels    String[]
+  minQuantity     Int?
+  minMatchScore   Int?
+  keywords        String[]
+  channels        String[]
+  email           String?
+  webhookUrl      String?
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  lastTriggeredAt DateTime?
+  triggerCount    Int          @default(0)
+  events          AlertEvent[]
+}
+
+model AlertEvent {
+  id               String   @id
+  ruleId           String
+  rule             Alert    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  ruleName         String
+  opportunityId    String
+  opportunityTitle String
+  intentLevel      String
+  intentScore      Int
+  read             Boolean  @default(false)
+  deliveries       Json
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model HistoricalAward {
+  id                String   @id
+  sourceKey         String
+  awardId           String
+  recipientName     String?
+  awardingAgency    String?
+  awardingSubAgency String?
+  amount            Float?
+  description       String?
+  naicsCode         String?
+  state             String?
+  actionDate        String?
+  sourceUrl         String?
+  retrievedAt       DateTime
+  isDemo            Boolean  @default(false)
+
+  @@unique([sourceKey, awardId])
+  @@index([awardingAgency])
+  @@index([state])
+}
+
+model AppSetting {
+  key   String @id
+  value Json
+}

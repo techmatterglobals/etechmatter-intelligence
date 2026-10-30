@@ -1,0 +1,21 @@
+{
+  "name": "etechmatter-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ETechMatter Intelligence — Real-Time U.S. IT Hardware Buying Signals",
+  "workspaces": ["packages/shared", "server", "web"],
+  "scripts": {
+    "dev": "npm run dev:api & npm run dev:web",
+    "dev:api": "npm run dev -w @etm/server",
+    "dev:web": "npm run dev -w @etm/web",
+    "build": "npm run build -w @etm/web",
+    "start": "npm run start -w @etm/server",
+    "sync": "npm run sync -w @etm/server",
+    "test": "npm test -w @etm/shared && npm test -w @etm/server",
+    "typecheck": "npm run typecheck -w @etm/shared && npm run typecheck -w @etm/server",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm run db:migrate -w @etm/server",
+    "db:seed": "npm run db:seed -w @etm/server"
+  },
+  "engines": { "node": ">=20.12" }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-standalone/
+.env
+.env.*
+!.env.example
+*.log
+server/prisma/migrations/dev.db*
